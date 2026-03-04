@@ -2,6 +2,7 @@ import os
 import math
 import logging
 import time
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,7 @@ from src.subspacead.core.extractor import FeatureExtractor
 from src.subspacead.core.pca import PCAModel, KernelPCAModel
 from src.subspacead.post_process.scoring import calculate_anomaly_scores, post_process_map
 from src.subspacead.utils.viz import save_visualization, save_overlay_for_intro
+from src.subspacead.utils.report import generate_report
 from src.subspacead.post_process.specular import (
     specular_mask_torch,
     filter_specular_anomalies,
@@ -150,7 +152,9 @@ def main():
     )
 
     # Init model
-    extractor = FeatureExtractor(args.model_ckpt)
+    if args.model_cache_dir:
+        os.makedirs(args.model_cache_dir, exist_ok=True)
+    extractor = FeatureExtractor(args.model_ckpt, cache_dir=args.model_cache_dir)
 
     # Get dataset categories
     if args.categories:
@@ -167,6 +171,7 @@ def main():
     # Main loop
     all_results = []
     for category in categories:
+      try:
         logging.info(f"--- Processing Category: {category} ---")
 
         if category in args.no_aug_categories:
@@ -191,6 +196,14 @@ def main():
         if not train_paths:
             logging.warning(f"No training images found for {category}. Skipping.")
             continue
+
+        # Log test set composition
+        n_good_test = sum(1 for p in test_paths if Path(p).parent.name.lower() in ("good", "normal"))
+        n_anom_test = len(test_paths) - n_good_test
+        logging.info(f"Train: {len(train_paths)} | Test: {len(test_paths)} ({n_good_test} good, {n_anom_test} anomalous)")
+        if test_paths:
+            test_subdirs = set(Path(p).parent.name for p in test_paths)
+            logging.info(f"Test subfolders: {test_subdirs}")
 
         if args.batched_zero_shot:
             # Batched 0-shot train=test
@@ -449,38 +462,59 @@ def main():
             num_batches = math.ceil(total_train_images / args.batch_size)
             feature_generator = feature_generator_full
 
-        if args.use_kernel_pca:
-            if args.bg_mask_method == "pca_normality":
-                logging.error(
-                    "PCA Normality mask is not compatible with Kernel PCA. "
-                    "Use 'dino_saliency' or no mask."
-                )
-                raise ValueError("Cannot use pca_normality mask with use_kernel_pca.")
+        # Check memory bank
+        memory_bank_loaded = False
+        if args.memory_bank:
+            bank_dir = Path(args.outdir) / "memory_bank"
+            bank_path = bank_dir / f"{category}.pkl"
+            if bank_path.exists():
+                with open(bank_path, "rb") as f:
+                    pca_params = pickle.load(f)
+                logging.info(f"Loaded memory bank from {bank_path}")
+                memory_bank_loaded = True
 
-            logging.info("Collecting all features for Kernel PCA...")
-            all_train_tokens = np.concatenate(
-                list(
-                    tqdm(
-                        feature_generator(),
-                        desc="Feature Collection",
-                        total=num_batches,
+        if not memory_bank_loaded:
+            if args.use_kernel_pca:
+                if args.bg_mask_method == "pca_normality":
+                    logging.error(
+                        "PCA Normality mask is not compatible with Kernel PCA. "
+                        "Use 'dino_saliency' or no mask."
+                    )
+                    raise ValueError("Cannot use pca_normality mask with use_kernel_pca.")
+
+                logging.info("Collecting all features for Kernel PCA...")
+                all_train_tokens = np.concatenate(
+                    list(
+                        tqdm(
+                            feature_generator(),
+                            desc="Feature Collection",
+                            total=num_batches,
+                        )
                     )
                 )
-            )
-            pca_model = KernelPCAModel(
-                k=args.pca_dim,
-                kernel=args.kernel_pca_kernel,
-                gamma=args.kernel_pca_gamma,
-            )
-            pca_params = pca_model.fit(all_train_tokens)
-        else:
-            pca_model = PCAModel(k=args.pca_dim, ev=args.pca_ev, whiten=args.whiten)
-            pca_params = pca_model.fit(
-                feature_generator,
-                feature_dim,
-                total_tokens,
-                num_batches,
-            )
+                pca_model = KernelPCAModel(
+                    k=args.pca_dim,
+                    kernel=args.kernel_pca_kernel,
+                    gamma=args.kernel_pca_gamma,
+                )
+                pca_params = pca_model.fit(all_train_tokens)
+            else:
+                pca_model = PCAModel(k=args.pca_dim, ev=args.pca_ev, whiten=args.whiten)
+                pca_params = pca_model.fit(
+                    feature_generator,
+                    feature_dim,
+                    total_tokens,
+                    num_batches,
+                )
+
+            # Save memory bank
+            if args.memory_bank:
+                bank_dir = Path(args.outdir) / "memory_bank"
+                bank_dir.mkdir(parents=True, exist_ok=True)
+                bank_path = bank_dir / f"{category}.pkl"
+                with open(bank_path, "wb") as f:
+                    pickle.dump(pca_params, f)
+                logging.info(f"Saved memory bank to {bank_path}")
 
         # 2. Determine PR-optimal F1 thresholds (if validation set exists)
         if val_paths:
@@ -494,7 +528,7 @@ def main():
                 path_batch = val_paths[i : i + args.batch_size]
                 pil_imgs = [Image.open(p).convert("RGB") for p in path_batch]
                 is_anomaly_batch = [
-                    "good" not in p and "Normal" not in p for p in path_batch
+                    Path(p).parent.name.lower() not in ("good", "normal") for p in path_batch
                 ]
 
                 if args.patch_size:
@@ -827,7 +861,7 @@ def main():
             path_batch = test_paths[i : i + args.batch_size]
             pil_imgs = [Image.open(p).convert("RGB") for p in path_batch]
             is_anomaly_batch = [
-                "good" not in str(p) and "Normal" not in str(p) for p in path_batch
+                Path(p).parent.name.lower() not in ("good", "normal") for p in path_batch
             ]
             torch.cuda.synchronize(DEVICE)
             start_time = time.perf_counter()
@@ -1221,7 +1255,20 @@ def main():
             )
             au_pro = np.nan
 
-        # 5. Log and store results
+        # 5. Save per-image scores for report diagnostics
+        scores_dir = os.path.join(args.outdir, "scores")
+        os.makedirs(scores_dir, exist_ok=True)
+        scores_df = pd.DataFrame({
+            "path": test_paths,
+            "label": img_true,
+            "score": img_pred_auroc,
+        })
+        scores_df.to_csv(
+            os.path.join(scores_dir, f"{category}.csv"),
+            index=False,
+        )
+
+        # 6. Log and store results
         logging.info(
             f"{category} Results | I-AUROC: {img_auroc:.4f} | I-AUPR: {img_aupr:.4f} | "
             f"P-AUROC: {px_auroc:.4f} | AU-PRO: {au_pro:.4f} | "
@@ -1230,31 +1277,46 @@ def main():
         all_results.append(
             [category, img_auroc, img_aupr, px_auroc, au_pro, img_f1, px_f1]
         )
-    df = pd.DataFrame(
-        all_results,
-        columns=[
-            "Category",
-            "Image AUROC",
-            "Image AUPR",
-            "Pixel AUROC",
-            "AU-PRO",
-            "Image F1",
-            "Pixel F1",
-        ],
-    )
-    if not df.empty and len(df) > 1:
+
+        # Save intermediate results after each category
+        _save_results(all_results, args.outdir)
+
+      except Exception as e:
+        logging.error(f"Error processing category '{category}': {e}", exc_info=True)
+        continue
+
+    _save_results(all_results, args.outdir, final=True)
+
+    # Generate PDF report
+    try:
+        report_path = generate_report(args.outdir)
+        if report_path:
+            logging.info(f"PDF report: {report_path}")
+    except Exception as e:
+        logging.warning(f"PDF report generation failed: {e}")
+
+
+def _save_results(all_results, outdir, final=False):
+    """Save benchmark results to CSV."""
+    RESULT_COLUMNS = [
+        "Category", "Image AUROC", "Image AUPR", "Pixel AUROC",
+        "AU-PRO", "Image F1", "Pixel F1",
+    ]
+    df = pd.DataFrame(all_results, columns=RESULT_COLUMNS)
+    if final and not df.empty and len(df) > 1:
         mean_values = df.mean(numeric_only=True)
         mean_row = pd.DataFrame(
             [["Average"] + mean_values.tolist()], columns=df.columns
         )
         df = pd.concat([df, mean_row], ignore_index=True)
 
-    logging.info("\n--- Benchmark Final Results ---")
-    logging.info("\n" + df.to_string(index=False, float_format="%.4f", na_rep="N/A"))
+    if final:
+        logging.info("\n--- Benchmark Final Results ---")
+        logging.info("\n" + df.to_string(index=False, float_format="%.4f", na_rep="N/A"))
 
-    results_path = os.path.join(args.outdir, "benchmark_results.csv")
+    results_path = os.path.join(outdir, "benchmark_results.csv")
     df.to_csv(results_path, index=False, float_format="%.4f")
-    logging.info(f"\nResults saved to {results_path}")
+    logging.info(f"Results saved to {results_path}")
 
 
 if __name__ == "__main__":

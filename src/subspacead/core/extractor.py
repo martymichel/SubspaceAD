@@ -11,10 +11,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class FeatureExtractor:
     """Encapsulates the feature extraction model and logic."""
 
-    def __init__(self, model_ckpt: str):
+    def __init__(self, model_ckpt: str, cache_dir: str = None):
         logging.info(f"Loading feature extraction model: {model_ckpt}...")
-        self.processor = AutoImageProcessor.from_pretrained(model_ckpt)
-        self.model = AutoModel.from_pretrained(model_ckpt).eval().to(DEVICE)
+        self.processor = AutoImageProcessor.from_pretrained(model_ckpt, cache_dir=cache_dir)
+        self.model = AutoModel.from_pretrained(model_ckpt, cache_dir=cache_dir).eval().to(DEVICE)
         try:
             self.model.set_attn_implementation("eager")
             logging.info("Set model attention implementation to 'eager'.")
@@ -103,6 +103,19 @@ class FeatureExtractor:
         _spatial_converter = lambda x: self._spatial_from_seq(
             x, drop_front, n_expected, h_p, w_p
         )
+
+        # Validate layer indices against available hidden states (warn once)
+        n_layers = len(hidden_states)
+        valid_range = range(-n_layers, n_layers)
+        clamped = [li for li in layers if li in valid_range]
+        skipped = [li for li in layers if li not in valid_range]
+        if skipped and not getattr(self, "_layer_warned", False):
+            self._layer_warned = True
+            logging.warning(
+                f"Layer indices {skipped} out of range (model has {n_layers} hidden states). "
+                f"Using valid layers: {clamped or [-1]}"
+            )
+        layers = clamped or [-1]
 
         if agg_method == "group":
             if not grouped_layers:

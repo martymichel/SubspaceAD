@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync)",
+      "Bash(uv run python -c \"import gui; print\\(''GUI module imports OK''\\)\")",
+      "Bash(uv run python -c \"import gui; print\\(''OK''\\)\")",
+      "Bash(uv run python -c \":*)",
+      "Bash(ls -d \"G:/OneDrive - Flex/3_ARBEIT ARBEIT ARBEIT/00_MAS Data Science - Master Thesis/Datasets/Cup_Skyrack/.raw/\"*/)",
+      "WebFetch(domain:arxiv.org)"
+    ]
+  }
+}

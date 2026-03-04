@@ -157,6 +157,47 @@ class VisADataset(BaseDatasetHandler):
         return None
 
 
+class CustomDataset(BaseDatasetHandler):
+    """Handler for custom datasets with structure:
+    category/
+    ├── train/good/*.png (or .jpg, .bmp, .jpeg, .tif, .tiff)
+    └── test/<any_subfolder>/*.png
+    Optional: ground_truth/<defect_type>/<stem>_mask.png
+    """
+
+    EXTENSIONS = ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff",
+                  "*.PNG", "*.JPG", "*.JPEG", "*.BMP", "*.TIF", "*.TIFF")
+
+    def _glob_multi(self, pattern_base):
+        paths = []
+        for ext in self.EXTENSIONS:
+            paths.extend(glob.glob(str(pattern_base / ext)))
+        return sorted(set(paths))
+
+    def get_train_paths(self):
+        return self._glob_multi(self.category_path / "train" / "good")
+
+    def get_test_paths(self):
+        paths = []
+        for ext in self.EXTENSIONS:
+            paths.extend(
+                glob.glob(str(self.category_path / "test" / "*" / ext))
+            )
+        return sorted(set(paths))
+
+    def get_ground_truth_path(self, test_path: str):
+        p = Path(test_path)
+        # Try MVTec-style mask naming
+        gt = self.category_path / "ground_truth" / p.parent.name / f"{p.stem}_mask.png"
+        if gt.exists():
+            return str(gt)
+        # Try same-name mask
+        gt2 = self.category_path / "ground_truth" / p.parent.name / p.name
+        if gt2.exists():
+            return str(gt2)
+        return None
+
+
 def get_dataset_handler(name: str, root_path: str, category: str) -> BaseDatasetHandler:
     """Factory function to get the correct dataset handler."""
     if name == "mvtec_ad":
@@ -167,5 +208,7 @@ def get_dataset_handler(name: str, root_path: str, category: str) -> BaseDataset
         return MVTecAD2Dataset(root_path, category)
     elif name == "visa":
         return VisADataset(root_path, category)
+    elif name == "custom":
+        return CustomDataset(root_path, category)
     else:
         raise ValueError(f"Unknown dataset: {name}")

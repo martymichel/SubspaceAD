@@ -6,14 +6,34 @@ build-backend = "setuptools.build_meta"
 name = "subspacead"
 version = "0.1.0"
 description = "SubspaceAD Codebase"
+requires-python = ">=3.10"
 dependencies = [
     "torch",
     "torchvision",
     "transformers",
     "opencv-python",
     "kornia",
-    "anomalib"
+    "anomalib",
+    "scikit-learn",
+    "tqdm",
+    "pandas",
+    "ttkbootstrap",
+    "fpdf2",
+    "matplotlib",
 ]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu124" },
+]
+torchvision = [
+    { index = "pytorch-cu124" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
 
 [tool.setuptools.packages.find]
 where = ["src"]

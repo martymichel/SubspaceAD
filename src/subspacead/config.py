@@ -31,7 +31,7 @@ def get_args():
         "--dataset_name",
         type=str,
         required=True,
-        choices=["mvtec_ad", "mvtec_ad2", "visa"],
+        choices=["mvtec_ad", "mvtec_ad2", "visa", "custom"],
         help="Name of the dataset to use.",
     )
     data_group.add_argument(
@@ -259,6 +259,23 @@ def get_args():
         "--batched_zero_shot",
         action="store_true",
         help="Run in batched zero-shot mode, fitting PCA on the test set.",
+    )
+    log_group.add_argument(
+        "--project_name",
+        type=str,
+        default=None,
+        help="Project name for memory bank storage.",
+    )
+    log_group.add_argument(
+        "--memory_bank",
+        action="store_true",
+        help="Enable memory bank: save PCA params after fitting, load if available.",
+    )
+    log_group.add_argument(
+        "--model_cache_dir",
+        type=str,
+        default=None,
+        help="Local directory to cache HuggingFace models (e.g. ./models).",
     )
 
     args = parser.parse_args()

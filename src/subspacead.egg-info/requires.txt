@@ -4,3 +4,9 @@ transformers
 opencv-python
 kornia
 anomalib
+scikit-learn
+tqdm
+pandas
+ttkbootstrap
+fpdf2
+matplotlib

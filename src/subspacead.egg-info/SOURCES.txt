@@ -19,4 +19,5 @@ src/subspacead/post_process/scoring.py
 src/subspacead/post_process/specular.py
 src/subspacead/utils/__init__.py
 src/subspacead/utils/common.py
+src/subspacead/utils/report.py
 src/subspacead/utils/viz.py
